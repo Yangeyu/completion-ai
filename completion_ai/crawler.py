@@ -25,6 +25,7 @@ class HelpNode:
 
 
 DiscoverFn = Callable[[str], list[str]]
+StatusFn = Callable[[str], None]
 
 
 def run_help(argv: list[str], timeout: float = 8.0) -> str:
@@ -40,22 +41,37 @@ def run_help(argv: list[str], timeout: float = 8.0) -> str:
     return (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
 
 
-def crawl(cmd: str, max_depth: int, discover: DiscoverFn) -> HelpNode:
+def crawl(
+    cmd: str,
+    max_depth: int,
+    discover: DiscoverFn,
+    on_status: StatusFn | None = None,
+) -> HelpNode:
     if shutil.which(cmd) is None:
         raise FileNotFoundError(f"command not found on PATH: {cmd}")
+    if on_status:
+        on_status(f"running `{cmd} --help`")
     root = HelpNode(path=[cmd], help_text=run_help([cmd]))
     if max_depth > 1:
-        _expand(root, max_depth, 1, discover)
+        _expand(root, max_depth, 1, discover, on_status)
     return root
 
 
-def _expand(node: HelpNode, max_depth: int, depth: int, discover: DiscoverFn) -> None:
+def _expand(
+    node: HelpNode,
+    max_depth: int,
+    depth: int,
+    discover: DiscoverFn,
+    on_status: StatusFn | None,
+) -> None:
     if depth >= max_depth:
         return
     for sub in discover(node.help_text):
         if not sub or not isinstance(sub, str):
             continue
         child_path = node.path + [sub]
+        if on_status:
+            on_status(f"running `{' '.join(child_path)} --help`")
         child = HelpNode(path=child_path, help_text=run_help(child_path))
         node.children.append(child)
-        _expand(child, max_depth, depth + 1, discover)
+        _expand(child, max_depth, depth + 1, discover, on_status)

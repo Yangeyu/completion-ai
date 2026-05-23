@@ -1,6 +1,6 @@
 [project]
 name = "completion-ai"
-version = "0.1.1"
+version = "0.2.0"
 description = "LLM-powered zsh completion scaffolding for arbitrary CLIs"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "openai>=1.40.0",
     "httpx[socks]>=0.27.0",
+    "rich>=13.0",
 ]
 
 [project.urls]
