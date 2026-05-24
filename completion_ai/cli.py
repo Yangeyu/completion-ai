@@ -37,8 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output path (default: ./_<command>)",
     )
     p.add_argument(
-        "-d", "--depth", type=int, default=2,
-        help="Max subcommand crawl depth (default: 2)",
+        "-d", "--depth", type=int, default=3,
+        help=(
+            "Max subcommand crawl depth (default: 3). Larger trees are "
+            "slower: ~1 LLM call per node. Drop to 2 for a quick pass."
+        ),
     )
     p.add_argument(
         "--model", default=DEFAULT_MODEL,
@@ -175,6 +178,13 @@ def _run_with_progress(args, console: Console) -> tuple[HelpNode, dict, str, boo
             p.advance(t)
     n_nodes = len(root.flatten())
     console.print(f"  [dim]→ fetched {n_nodes} help text(s)[/dim]")
+    if n_nodes >= 50:
+        est_min = max(1, n_nodes // 30)  # ~30 nodes/min at 8-way concurrency
+        console.print(
+            f"  [yellow]→ {n_nodes} nodes is large; schema extraction may "
+            f"take ~{est_min}–{est_min * 2} min. Pass [bold]-d 2[/bold] "
+            f"for a quicker pass.[/yellow]"
+        )
 
     # Phase 4: extract schema
     with _phase_progress(console) as p:
