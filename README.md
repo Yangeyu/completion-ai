@@ -130,6 +130,73 @@ uv venv && source .venv/bin/activate
 uv pip install -e .
 ```
 
+## Benchmark
+
+`eval/check_claude.py` 用 `claude --help` 及若干子命令的 help 文本作为
+golden fixture，验证 `discover_subcommands` 和 `_extract_node` 的输出是
+否符合预期。每次改 prompt 都应该跑一次。
+
+```sh
+# 用 uv（自动激活项目环境）
+uv run python -m eval.check_claude
+
+# 或直接用项目 venv
+.venv/bin/python -m eval.check_claude
+```
+
+需要 `DASHSCOPE_API_KEY`。退出码 0/1，可直接接 CI。
+
+样例输出：
+
+```
+=== claude ===
+[discover] precision=1.00 recall=1.00 f1=1.00  -> PASS
+[flags]    39/39 recall=1.00                   -> PASS
+[positionals] prompt OK                        -> PASS
+[details]  11/11 rate=1.00                     -> PASS
+
+=== claude auth ===
+[discover] precision=1.00 recall=1.00 f1=1.00  -> PASS
+...
+
+=== Summary ===
+  PASS  claude
+  PASS  claude auth
+  PASS  claude mcp add
+  overall: PASS
+```
+
+### 评估维度与阈值
+
+| 维度 | 含义 | 阈值 |
+|---|---|---|
+| `discover` | 子命令集合 precision/recall/F1 | F1 ≥ 0.95 |
+| `flags`    | must-have flag 命中率           | recall ≥ 0.90 |
+| `positionals` | 名称与 `repeatable` 是否匹配 | 全中 |
+| `details`  | 抽样 flag 的 short/takes_value/choices | 通过率 ≥ 0.85 |
+
+### 扩展 fixture
+
+加新用例只要两步，不用改脚本：
+
+1. 把目标命令的 help 文本存到 `eval/fixtures/<name>_help.txt`
+   ```sh
+   docker buildx build --help > eval/fixtures/docker_buildx_build_help.txt
+   ```
+2. 在 `eval/fixtures/claude_expected.json` 的 `cases[]` 里追加一项：
+   ```json
+   {
+     "path": ["docker", "buildx", "build"],
+     "help_file": "docker_buildx_build_help.txt",
+     "subcommands": [],
+     "positionals": [{"name": "PATH"}],
+     "must_have_flags": ["--tag", "--file", "--platform"],
+     "flag_details": [
+       {"long": "--tag", "short": "-t", "takes_value": true}
+     ]
+   }
+   ```
+
 ## License
 
 MIT

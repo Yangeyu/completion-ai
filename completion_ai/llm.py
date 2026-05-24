@@ -29,80 +29,61 @@ def _client() -> OpenAI:
 
 DISCOVER_SYSTEM = textwrap.dedent(
     """
-    Output format — MANDATORY:
-    Return a JSON OBJECT with EXACTLY one key, "subcommands", whose value
-    is an ARRAY of strings. Nothing else. No markdown, no prose, no
-    extra keys, no top-level array.
+    List the direct subcommand names from a CLI's --help output.
 
-    ✓ Correct:   {"subcommands": ["build", "run", "ps"]}
-    ✓ Correct:   {"subcommands": []}
-    ✗ Wrong:     ["build", "run", "ps"]
-    ✗ Wrong:     {"commands": [...]}
-    ✗ Wrong:     {"subcommands": [{"name": "build"}]}   (must be strings)
-
-    Task:
-    You read one CLI's --help output and list its direct subcommand names.
-
-    A subcommand can ONLY come from a section explicitly headed
-    "Commands:" or "Subcommands:" (case-insensitive). If no such section
-    is present, return {"subcommands": []} — do NOT invent subcommands
-    from any other text.
-
-    Sections you MUST ignore:
-    - "Usage:" — tokens here (e.g. "cmd|alias", "[command]", "<target>")
-      are the command's own name, aliases, or placeholders, never its
-      subcommands.
-    - "Options:" / "Flags:" — those are flags, not subcommands.
-    - "Examples:", "Description:", "Aliases:", or any free prose.
+    Return JSON: {"subcommands": ["name", ...]}
 
     Rules:
-    - Only direct subcommands (not flags, not nested sub-subcommands).
-    - For aliased entries inside the Commands: section like
-      "plugin|plugins" or "update|upgrade", return EVERY name in the
-      alias group as separate entries (e.g. both "plugin" and "plugins",
-      both "update" and "upgrade"). They are interchangeable names for
-      the same command and the user should be able to tab-complete any
-      of them.
-    - Strip placeholder tokens like "[options]", "[args]", "<target>".
-    - Skip "help" if listed as a subcommand.
-    - Be conservative: only what is explicitly listed under Commands:.
-    - Do not invent commands not present in the help text.
+    - Only take names from a section whose heading contains
+      "Commands" or "Subcommands" (case-insensitive, e.g.
+      "Commands:", "Available Commands:", "SUBCOMMANDS").
+      If no such section exists, return {"subcommands": []}.
+    - Ignore Usage:, Options:, Flags:, Examples:, and prose.
+    - For aliases like "plugin|plugins", emit each name separately.
+    - Strip placeholders like [options], <target>, [command].
+    - Skip any entry named exactly "help" — every CLI framework
+      auto-injects it and it duplicates the --help flag.
+    - Never invent names not literally present in the section.
     """
 ).strip()
 
 
 EXTRACT_SYSTEM = textwrap.dedent(
     """
-    Output format — MANDATORY:
-    Return a single JSON OBJECT with EXACTLY these three keys:
-    "description" (string), "flags" (array), "positionals" (array).
-    No markdown, no prose, no extra keys, no top-level array.
+    Extract flags and positional arguments from one CLI command's
+    --help output. Output feeds a zsh tab-completion script:
+    missed flags hurt UX, invented flags break trust — when in
+    doubt, omit.
 
-    ✓ Correct:   {"description": "...", "flags": [...], "positionals": [...]}
-    ✗ Wrong:     [{"long": "--foo"}, ...]
-    ✗ Wrong:     {"name": "foo", "description": "..."}        (no "name")
-    ✗ Wrong:     {"subcommands": [...], ...}                  (no "subcommands")
-
-    Each flag object: {"long": "--foo", "short": "-f", "takes_value": true,
-      "value_hint": "file|dir|enum|string", "choices": ["a","b"],
-      "description": "..."}.
-    Each positional object: {"name": "PATH", "value_hint": "file",
-      "description": "...", "repeatable": false}.
-
-    Task:
-    You analyze a single CLI command's --help output and extract its flags
-    and positional arguments. Be conservative: only include things
-    explicitly shown in the help text. Do not invent flags.
+    Return JSON:
+    {
+      "description": "<one line>",
+      "flags": [
+        {"long": "--foo", "short": "-f", "takes_value": true,
+         "value_hint": "file", "choices": ["a","b"],
+         "description": "...", "repeatable": false}
+      ],
+      "positionals": [
+        {"name": "PATH", "value_hint": "file",
+         "description": "...", "repeatable": false}
+      ]
+    }
 
     Rules:
-    - Do NOT include a "name" field; the caller already knows the command.
-    - Do NOT include a "subcommands" field; the caller owns the command
-      tree. Even if the help text lists subcommands, ignore that section.
-    - "short" may be omitted if absent. "choices" only when help lists them.
-    - "value_hint" must be one of: file, dir, command, host, user, branch,
-      string, enum, integer. Use "string" when unsure.
-    - Keep descriptions under 80 chars, single line.
-    - Omit any field you are unsure about rather than guessing.
+    - Every flag and positional MUST be a JSON object with the
+      fields above. NEVER emit a bare string like "--foo" inside
+      the arrays — wrap it as {"long": "--foo", ...}.
+    - Only include flags/positionals literally shown in the help.
+    - Omit "short", "choices", "repeatable" when not applicable.
+    - value_hint: file, dir, path, port, url, host, user, branch,
+      duration, integer, string, enum. Use "string" if unsure.
+    - Set repeatable: true when help shows "..." or says
+      "may be repeated / multiple times".
+    - Treat --no-xxx / --disable-xxx as standalone flags
+      (takes_value: false).
+    - Keep descriptions to one line, max 120 chars. Prefer the
+      help's own wording; truncate at a word boundary if longer.
+    - Do not emit "name" or "subcommands" fields.
     """
 ).strip()
 
@@ -167,27 +148,77 @@ def _assemble(node: HelpNode, fields: dict[int, dict]) -> dict:
     }
 
 
-def _extract_node(node: HelpNode, model: str, verbose: bool) -> dict:
-    """One LLM call: extract flags/positionals/description for one node."""
-    path = " ".join(node.path)
-    user_content = (
-        f"Command: {path}\n\n"
-        f"--help output:\n\n{node.help_text.rstrip()}"
-    )
-    if verbose:
-        print(f"[llm] extract {path!r} chars={len(user_content)}")
-    resp = _client().chat.completions.create(
+FALLBACK_MODEL = os.environ.get("COMPLETION_AI_FALLBACK_MODEL", "qwen3.6-plus")
+
+
+def _call_extract(path: str, help_text: str, model: str, max_tokens: int):
+    user_content = f"Command: {path}\n\n--help output:\n\n{help_text.rstrip()}"
+    return _client().chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": EXTRACT_SYSTEM},
             {"role": "user", "content": user_content},
         ],
-        temperature=0.1,
+        temperature=0,
+        max_tokens=max_tokens,
         response_format={"type": "json_object"},
         extra_body={"enable_thinking": False},
     )
+
+
+def _extract_node(node: HelpNode, model: str, verbose: bool) -> dict:
+    """One LLM call: extract flags/positionals/description for one node.
+
+    If the primary model truncates (commands like `podman run` have ~100
+    flags and overflow 8K output), retry once with FALLBACK_MODEL at a
+    higher token budget. Only skip the node if both attempts truncate.
+    """
+    import sys
+    path = " ".join(node.path)
+    if verbose:
+        print(f"[llm] extract {path!r} chars={len(node.help_text)}")
+
+    resp = _call_extract(path, node.help_text, model, max_tokens=8192)
     if resp.choices[0].finish_reason == "length":
-        raise ValueError(
-            f"LLM response truncated for {path!r}; help text may be too long."
-        )
-    return json.loads(resp.choices[0].message.content or "{}")
+        print(f"[completion-ai] {path!r} truncated on {model}, "
+              f"retrying with {FALLBACK_MODEL}", file=sys.stderr)
+        resp = _call_extract(path, node.help_text, FALLBACK_MODEL, max_tokens=16384)
+        if resp.choices[0].finish_reason == "length":
+            print(f"[completion-ai] WARN {path!r} still truncated on "
+                  f"{FALLBACK_MODEL}; skipping flags for this node",
+                  file=sys.stderr)
+            return {"description": "", "flags": [], "positionals": []}
+
+    return _normalize(json.loads(resp.choices[0].message.content or "{}"))
+
+
+def _normalize(data: dict) -> dict:
+    """Coerce LLM output into the schema shape downstream code expects.
+
+    At scale (1000+ nodes) Qwen-flash occasionally returns a bare string
+    like "--foo" instead of {"long": "--foo"} despite explicit prompt
+    rules. Salvage what we can here so renderer/assembler can trust input.
+    """
+    def to_flag(x):
+        if isinstance(x, dict):
+            return x
+        if isinstance(x, str):
+            s = x.strip()
+            if s.startswith("--"):
+                return {"long": s}
+            if s.startswith("-") and len(s) > 1:
+                return {"short": s}
+        return None
+
+    def to_pos(x):
+        if isinstance(x, dict):
+            return x
+        if isinstance(x, str) and x.strip():
+            return {"name": x.strip()}
+        return None
+
+    return {
+        "description": data.get("description") or "",
+        "flags":       [f for f in (to_flag(x) for x in (data.get("flags") or [])) if f],
+        "positionals": [p for p in (to_pos(x)  for x in (data.get("positionals") or [])) if p],
+    }

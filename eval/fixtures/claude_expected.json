@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "path": ["claude"],
+      "help_file": "claude_help.txt",
+      "subcommands": [
+        "agents", "auth", "auto-mode", "doctor", "install", "mcp",
+        "plugin", "plugins", "project", "setup-token", "ultrareview",
+        "update", "upgrade"
+      ],
+      "positionals": [{"name": "prompt"}],
+      "must_have_flags": [
+        "--add-dir", "--agent", "--agents", "--allowedTools", "--append-system-prompt",
+        "--bare", "--continue", "--debug", "--debug-file", "--disable-slash-commands",
+        "--disallowedTools", "--effort", "--fallback-model", "--file",
+        "--fork-session", "--from-pr", "--ide", "--input-format", "--json-schema",
+        "--max-budget-usd", "--mcp-config", "--model", "--name", "--no-chrome",
+        "--no-session-persistence", "--output-format", "--permission-mode",
+        "--plugin-dir", "--plugin-url", "--print", "--resume", "--session-id",
+        "--settings", "--strict-mcp-config", "--system-prompt", "--tools",
+        "--verbose", "--version", "--worktree"
+      ],
+      "flag_details": [
+        {"long": "--print",        "short": "-p", "takes_value": false},
+        {"long": "--continue",     "short": "-c", "takes_value": false},
+        {"long": "--debug",        "short": "-d", "takes_value": true},
+        {"long": "--version",      "short": "-v", "takes_value": false},
+        {"long": "--worktree",     "short": "-w", "takes_value": true},
+        {"long": "--name",         "short": "-n", "takes_value": true},
+        {"long": "--resume",       "short": "-r", "takes_value": true},
+        {"long": "--model",        "takes_value": true},
+        {"long": "--output-format","takes_value": true, "choices": ["text", "json", "stream-json"]},
+        {"long": "--input-format", "takes_value": true, "choices": ["text", "stream-json"]},
+        {"long": "--permission-mode", "takes_value": true,
+         "choices": ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]}
+      ]
+    },
+    {
+      "path": ["claude", "auth"],
+      "help_file": "claude_auth_help.txt",
+      "subcommands": ["login", "logout", "status"],
+      "positionals": [],
+      "must_have_flags": ["--help"],
+      "flag_details": [
+        {"long": "--help", "short": "-h", "takes_value": false}
+      ]
+    },
+    {
+      "path": ["claude", "mcp", "add"],
+      "help_file": "claude_mcp_add_help.txt",
+      "subcommands": [],
+      "positionals": [
+        {"name": "name"},
+        {"name": "commandOrUrl"},
+        {"name": "args", "repeatable": true}
+      ],
+      "must_have_flags": [
+        "--callback-port", "--client-id", "--client-secret",
+        "--env", "--header", "--scope", "--transport"
+      ],
+      "flag_details": [
+        {"long": "--env",       "short": "-e", "takes_value": true},
+        {"long": "--header",    "short": "-H", "takes_value": true},
+        {"long": "--scope",     "short": "-s", "takes_value": true,
+         "choices": ["local", "user", "project"]},
+        {"long": "--transport", "short": "-t", "takes_value": true,
+         "choices": ["stdio", "sse", "http"]},
+        {"long": "--callback-port", "takes_value": true}
+      ]
+    }
+  ]
+}
